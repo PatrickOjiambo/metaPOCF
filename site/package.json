@@ -9,12 +9,20 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@make-software/cspr-design": "^2.0.6",
+    "@make-software/csprclick-core-client": "^1.11.0",
+    "@make-software/csprclick-core-types": "^1.12.2",
+    "@make-software/csprclick-ui": "2.0.0-beta.5",
+    "@radix-ui/react-slot": "^1.2.4",
+    "casper-js-sdk": "^5.0.7",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.561.0",
     "next": "16.0.10",
     "react": "19.2.1",
     "react-dom": "19.2.1",
+    "sonner": "^2.0.7",
+    "styled-components": "^6.1.19",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
