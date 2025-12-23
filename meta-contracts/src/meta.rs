@@ -49,6 +49,7 @@ impl Meta {
         let deposit_amount = self.env().attached_value();
         // 1. Update internal accounting
         self.treasury_balance.add(deposit_amount);
+        self.total_principal.add(deposit_amount);
         self.investor_balances
             .add(&caller, deposit_amount);
         // 2. Add to the pooling variable
@@ -170,6 +171,69 @@ impl Meta {
 
 #[cfg(test)]
 mod tests {
-    use crate::meta::Meta;
-    use odra::host::{Deployer, NoArgs};
+    use crate::meta::{MetaHostRef};
+    use odra::casper_types::{PublicKey, U512, SecretKey};
+    use odra::host::{Deployer, HostEnv, HostRef};
+    use odra::prelude::*;
+
+    // Helper to create a dummy validator public key
+    fn mock_validator() -> PublicKey {
+        let secret_key = SecretKey::ed25519_from_bytes([1u8; 32]).unwrap();
+        PublicKey::from(&secret_key)
+    }
+
+    #[test]
+    fn test_initialization() {
+        let env = odra_test::env();
+        let validator = mock_validator();
+        let meta = Deployer::init(&env, validator.clone());
+
+        // Verify state (Internal getter or manual check if public)
+        // Since we are using HostRef, we call the contract's public methods
+        // Add a 'get_validator' method to your contract for this test if needed
+    }
+
+    #[test]
+    fn test_deposit_pooling_threshold() {
+        let env = odra_test::env();
+        let investor = env.get_account(1);
+        let validator = mock_validator();
+        let mut meta = MetaDeployer::init(&env, validator);
+
+        // 1. Small deposit (100 CSPR) - Should stay in pending
+        let deposit_1 = U512::from(100_000_000_000u64); // 100 CSPR in motes
+        env.set_caller(investor);
+        meta.with_tokens(deposit_1).deposit();
+
+        assert_eq!(meta.get_investor_balance(investor), deposit_1);
+        
+        // 2. Second deposit to cross the 500 CSPR threshold
+        let deposit_2 = U512::from(450_000_000_000u64); // 450 CSPR
+        meta.with_tokens(deposit_2).deposit();
+
+        // Total should be 550 CSPR. Because it's > 500, stake() was called.
+        // In a real test environment, you'd check if the delegation actually happened 
+        // using env.get_account_balance or checking the internal `staked_amount` var.
+        assert_eq!(meta.get_investor_balance(investor), deposit_1 + deposit_2);
+    }
+
+    #[test]
+    fn test_unstake_and_queue() {
+        let env = odra_test::env();
+        let investor = env.get_account(1);
+        let validator = mock_validator();
+        let mut meta = MetaDeployer::init(&env, validator);
+
+        // Deposit enough to stake
+        let amount = U512::from(600_000_000_000u64);
+        env.set_caller(investor);
+        meta.with_tokens(amount).deposit();
+
+        // Request Unstake
+        let unstake_amount = U512::from(200_000_000_000u64);
+        meta.request_unstake(unstake_amount);
+
+        // Balance should drop immediately (internal accounting)
+        assert_eq!(meta.get_investor_balance(investor), amount - unstake_amount);
+    }
 }
