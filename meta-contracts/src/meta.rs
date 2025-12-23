@@ -15,8 +15,16 @@ pub struct Meta {
     investor_balances: Mapping<Address, U512>,
     validator: Var<PublicKey>,
     rewards_pool: Var<U512>,
+    unstake_queue: List<UnstakeRequest>,
+    harvested_prize_pool: Var<U512>,
+    /// Track total principal (deposits) separately to identify rewards clearly.
+    total_principal: Var<U512>,
 }
-
+#[odra::odra_type]
+pub struct UnstakeRequest {
+    pub user: Address,
+    pub amount: U512,
+}
 /// Module implementation.
 ///
 /// To generate entrypoints,
@@ -41,9 +49,8 @@ impl Meta {
         let deposit_amount = self.env().attached_value();
         // 1. Update internal accounting
         self.treasury_balance.add(deposit_amount);
-        let current_user_balance = self.get_investor_balance(caller);
         self.investor_balances
-            .add(&caller, deposit_amount + current_user_balance);
+            .add(&caller, deposit_amount);
         // 2. Add to the pooling variable
         let current_pending = self.pending_stake_pool.get_or_default();
         let new_pending = current_pending + deposit_amount;
@@ -74,10 +81,16 @@ impl Meta {
         //We are triggering the actual undelegation here
         self.unstake(amount);
         self.staked_amount
-            .add(self.staked_amount.get_or_default() - amount);
+            .subtract(amount);
         self.total_unstaked_amount
-            .add(self.total_unstaked_amount.get_or_default() + amount);
-        self.investor_balances.add(&caller, investor_balance - amount);
+            .add(amount);
+        self.investor_balances
+            .subtract(&caller, amount);
+        let request = UnstakeRequest {
+            user: caller,
+            amount,
+        };
+        self.unstake_queue.push(request);
     }
 
     /// Undelegate the amount from the validator
@@ -90,30 +103,69 @@ impl Meta {
     pub fn get_investor_balance(&self, investor: Address) -> U512 {
         self.investor_balances.get_or_default(&investor)
     }
-    pub fn wihdraw(&mut self, amount: U512) {
-        let caller = self.env().caller();
-        let investor_balance = self.get_investor_balance(caller);
-        assert!(investor_balance >= amount, "Insufficient balance");
-        let new_inverstor_balance = investor_balance - amount;
-        self.investor_balances.add(&caller, new_inverstor_balance);
-        self.treasury_balance
-            .add(self.treasury_balance.get_or_default() - amount);
-        self.env().transfer_tokens(&caller, &amount);
-    }
-    pub fn dev_identify_winners(&self) -> Vec<Address> {}
+    //This method is going to be called by the admin only. It sends the unstaked CSPR back to the users
+    //TODO: Later find a way to remove processed requests from the queue
+    #[odra(payable)]
+    pub fn withdraw(&mut self) {
+        // Ensure only admin/owner can call this (assuming Ownable is implemented)
+        // self.ownable.assert_owner(&self.env().caller());
 
-    pub fn reward_winners(&mut self) {
-        let winners = self.dev_identify_winners();
-        let reward_pool = self.rewards_pool.get_or_default();
-        let reward_per_winner = reward_pool / U512::from(winners.len() as u64);
-        for winner in winners.iter() {
-            self.env().transfer_tokens(&winner, &reward_per_winner);
-            self.rewards_pool.add(reward_per_winner);
+        let mut current_liquid_cspr = self.env().self_balance();
+        // self_balance() is more reliable than treasury_balance var for real payouts
+
+        let queue_len = self.unstake_queue.len();
+        let mut processed_count = 0;
+
+        for i in 0..queue_len {
+            // Look at the oldest request (index 0)
+            if let Some(request) = self.unstake_queue.get(0) {
+                if current_liquid_cspr >= request.amount {
+                    self.env().transfer_tokens(&request.user, &request.amount);
+
+                    current_liquid_cspr -= request.amount;
+                    self.total_unstaked_amount.subtract(request.amount);
+
+                    // 3. Remove the processed request from the front
+                    self.unstake_queue.replace(
+                        0,
+                        UnstakeRequest {
+                            user: request.user,
+                            amount: U512::zero(),
+                        },
+                    );
+                    // Note: Standard Odra List doesn't have pop_front.
+                    // In production, you'd track a 'head' index to avoid O(n) shifts.
+                    processed_count += 1;
+                } else {
+                    // If the oldest request can't be filled, stop here to maintain FIFO order.
+                    break;
+                }
+            }
+        }
+
+        //TODO:  Cleanup: Remove the processed items from the list
+    }
+    pub fn harvest_rewards(&mut self) {
+        // 1. Calculate the total liabilities (Principal + Unstaked + Pending)
+        // This is exactly what the contract MUST keep to pay back users.
+        let total_liabilities = self.total_principal.get_or_default()
+            + self.total_unstaked_amount.get_or_default()
+            + self.pending_stake_pool.get_or_default();
+
+        // 2. Calculate the total actual assets
+        let total_assets = self.env().self_balance() + self.staked_amount.get_or_default();
+
+        // 3. The surplus is the reward yield
+        if total_assets > total_liabilities {
+            let surplus = total_assets - total_liabilities;
+
+            // Move surplus to the lottery pool
+            self.harvested_prize_pool.set(surplus);
+
+            // Log this for the off-chain script
+            // self.env().emit_event(RewardsHarvested { amount: surplus });
         }
     }
-
-    /// Production identify winners function
-    pub fn prod_identify_winners(&self) -> Vec<Address> {}
 }
 
 #[cfg(test)]
