@@ -4,11 +4,17 @@ use odra::prelude::*;
 /// or/and another modules.
 #[odra::module]
 pub struct Meta {
+    /// Total CSPR currently liquid in the contract (not staked).
     treasury_balance: Var<U512>,
-    rewards_pool: Var<U512>,
+    /// Total CSPR currently staked with the validator.
+    staked_amount: Var<U512>,
+    /// CSPR waiting to reach the 500 threshold for delegation.
+    pending_stake_pool: Var<U512>,
+    /// CSPR unstaked and ready to be claimed by users (or waiting for unbonding).
+    total_unstaked_amount: Var<U512>,
     investor_balances: Mapping<Address, U512>,
-    first_caller: Var<Address>,
     validator: Var<PublicKey>,
+    rewards_pool: Var<U512>,
 }
 
 /// Module implementation.
@@ -20,9 +26,8 @@ impl Meta {
     /// Odra constructor.
     ///
     /// Initializes the contract.
-    pub fn init(&mut self, validator: PublicKey, first_caller: Address) {
+    pub fn init(&mut self, validator: PublicKey) {
         self.validator.set(validator);
-        self.first_caller.set(first_caller);
         self.treasury_balance.set(U512::zero());
         self.rewards_pool.set(U512::zero());
     }
@@ -34,12 +39,32 @@ impl Meta {
         let caller = self.env().caller();
 
         let deposit_amount = self.env().attached_value();
+        // 1. Update internal accounting
         self.treasury_balance.add(deposit_amount);
-        self.investor_balances.add(&caller, deposit_amount);
-        //Once deposit has been done, mint mCSPR to the caller
-        //After minting, delegate the uploaded CSPR to a validator
-        // Use the ContractEnv's delegate method to delegate the tokens to the validator
-        self.stake(deposit_amount);
+        let current_user_balance = self.get_investor_balance(caller);
+        self.investor_balances
+            .add(&caller, deposit_amount + current_user_balance);
+        // 2. Add to the pooling variable
+        let current_pending = self.pending_stake_pool.get_or_default();
+        let new_pending = current_pending + deposit_amount;
+
+        // 3. Threshold Check (500 CSPR = 500,000,000,000 Motes)
+        let min_stake = U512::from(500_000_000_000u64);
+        if new_pending >= min_stake {
+            // We have enough to meet the Casper network requirement
+            self.stake(new_pending);
+
+            // Update state: move from liquid treasury to staked
+            self.staked_amount.add(new_pending);
+            self.treasury_balance.subtract(new_pending);
+
+            // Reset the pool
+            self.pending_stake_pool.set(U512::zero());
+        } else {
+            // Just update the pool and wait for more deposits
+            self.pending_stake_pool.set(new_pending);
+        }
+        //TODO: Mint mCSPR tokens to the user representing their stake
     }
     /// Undelegate the amount from the validator
     pub fn unstake(&mut self, amount: U512) {
