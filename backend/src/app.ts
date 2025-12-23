@@ -15,9 +15,14 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-app.get<object, MessageResponse>("/", (req, res) => {
+// Trust proxy for rate limiting behind reverse proxies
+app.set("trust proxy", 1);
+
+app.get("/", (req, res) => {
   res.json({
-    message: "🦄🌈✨👋🌎🌍🌏✨🌈🦄",
+    message: "🏆 Casper Prize Vault API",
+    version: "1.0.0",
+    docs: "/api/v1",
   });
 });
 
