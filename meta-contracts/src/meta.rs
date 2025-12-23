@@ -66,6 +66,20 @@ impl Meta {
         }
         //TODO: Mint mCSPR tokens to the user representing their stake
     }
+
+    pub fn request_unstake(&mut self, amount: U512) {
+        let caller = self.env().caller();
+        let investor_balance = self.get_investor_balance(caller);
+        assert!(investor_balance >= amount, "Insufficient balance");
+        //We are triggering the actual undelegation here
+        self.unstake(amount);
+        self.staked_amount
+            .add(self.staked_amount.get_or_default() - amount);
+        self.total_unstaked_amount
+            .add(self.total_unstaked_amount.get_or_default() + amount);
+        self.investor_balances.add(&caller, investor_balance - amount);
+    }
+
     /// Undelegate the amount from the validator
     pub fn unstake(&mut self, amount: U512) {
         self.env().undelegate(self.validator.get().unwrap(), amount);
@@ -86,13 +100,7 @@ impl Meta {
             .add(self.treasury_balance.get_or_default() - amount);
         self.env().transfer_tokens(&caller, &amount);
     }
-    pub fn dev_identify_winners(&self) -> Vec<Address> {
-        if let Some(first_caller) = self.first_caller.get() {
-            vec![first_caller]
-        } else {
-            vec![]
-        }
-    }
+    pub fn dev_identify_winners(&self) -> Vec<Address> {}
 
     pub fn reward_winners(&mut self) {
         let winners = self.dev_identify_winners();
@@ -105,14 +113,7 @@ impl Meta {
     }
 
     /// Production identify winners function
-    pub fn prod_identify_winners(&self) -> Vec<Address> {
-        //TODO: Implement production winner identification logic
-        if let Some(first_caller) = self.first_caller.get() {
-            vec![first_caller]
-        } else {
-            vec![]
-        }
-    }
+    pub fn prod_identify_winners(&self) -> Vec<Address> {}
 }
 
 #[cfg(test)]
