@@ -17,6 +17,20 @@ interface CasperWalletContextType {
 
 const CasperWalletContext = createContext<CasperWalletContextType | undefined>(undefined);
 
+// Timeout (in ms) for requests to the extension [DEFAULT: 30 min]
+const REQUESTS_TIMEOUT_MS = 30 * 60 * 1000;
+
+// Helper to get provider instance
+const getProvider = () => {
+  const providerConstructor = window.CasperWalletProvider;
+  if (providerConstructor === undefined) {
+    return null;
+  }
+  return providerConstructor({
+    timeout: REQUESTS_TIMEOUT_MS
+  });
+};
+
 export const useCasperWallet = () => {
   const context = useContext(CasperWalletContext);
   if (!context) {
@@ -52,25 +66,29 @@ export const CasperWalletProvider: React.FC<CasperWalletProviderProps> = ({ chil
   const connect = useCallback(async () => {
     setIsConnecting(true);
     try {
-      // Check if CasperLabs Signer extension is available
-      if (typeof window.casperlabsHelper === 'undefined') {
-        toast.error('Casper Signer extension not detected. Please install it from the Chrome Web Store.');
+      // Get the Casper Wallet provider
+      const provider = getProvider();
+      
+      if (!provider) {
+        toast.error('Casper Wallet extension not detected. Please install it from the Chrome Web Store.');
         setIsConnecting(false);
         return;
       }
 
-      // Request connection
-      const isConnected = await window.casperlabsHelper.isConnected();
+      // Request connection to the wallet
+      const connected = await provider.requestConnection();
       
-      if (!isConnected) {
-        await window.casperlabsHelper.requestConnection();
+      if (!connected) {
+        toast.error('Could not connect to Casper Wallet. Please try again.');
+        setIsConnecting(false);
+        return;
       }
 
-      // Get active public key
-      const activeKey = await window.casperlabsHelper.getActivePublicKey();
+      // Get active public key from the wallet
+      const activeKey = await provider.getActivePublicKey();
       
       if (!activeKey) {
-        toast.error('No active key found. Please unlock your Casper Signer.');
+        toast.error('No active key found. Please unlock your Casper Wallet.');
         setIsConnecting(false);
         return;
       }
@@ -95,10 +113,40 @@ export const CasperWalletProvider: React.FC<CasperWalletProviderProps> = ({ chil
   }, []);
 
   const disconnect = useCallback(() => {
-    setAccount(null);
-    setIsConnected(false);
-    localStorage.removeItem('casper_account');
-    toast.info('Wallet disconnected');
+    try {
+      const provider = getProvider();
+      if (provider) {
+        // Request disconnection from the wallet
+        provider.disconnectFromSite().then((disconnected: boolean) => {
+          if (disconnected) {
+            setAccount(null);
+            setIsConnected(false);
+            localStorage.removeItem('casper_account');
+            toast.info('Wallet disconnected');
+          }
+        }).catch((error: any) => {
+          console.error('Error disconnecting:', error);
+          // Still disconnect locally even if the wallet returns an error
+          setAccount(null);
+          setIsConnected(false);
+          localStorage.removeItem('casper_account');
+          toast.info('Wallet disconnected');
+        });
+      } else {
+        // If provider is not available, just disconnect locally
+        setAccount(null);
+        setIsConnected(false);
+        localStorage.removeItem('casper_account');
+        toast.info('Wallet disconnected');
+      }
+    } catch (error) {
+      console.error('Error during disconnect:', error);
+      // Ensure we disconnect locally even if there's an error
+      setAccount(null);
+      setIsConnected(false);
+      localStorage.removeItem('casper_account');
+      toast.info('Wallet disconnected');
+    }
   }, []);
 
   const signDeploy = useCallback(async (deploy: any): Promise<string> => {
@@ -107,18 +155,17 @@ export const CasperWalletProvider: React.FC<CasperWalletProviderProps> = ({ chil
     }
 
     try {
-      if (!window.casperlabsHelper) {
-        throw new Error('Casper Signer not available');
+      const provider = getProvider();
+      
+      if (!provider) {
+        throw new Error('Casper Wallet not available');
       }
 
-      // Convert deploy to JSON (would use DeployUtil in production)
+      // Convert deploy to JSON string
       const deployJson = JSON.stringify(deploy);
       
-      // Sign with Casper Signer
-      const signedDeployJson = await window.casperlabsHelper.sign(
-        deployJson,
-        account.publicKey
-      );
+      // Sign with Casper Wallet using the provider.sign method
+      const signedDeployJson = await provider.sign(deployJson, account.publicKey);
 
       return signedDeployJson;
     } catch (error: any) {
@@ -144,15 +191,16 @@ export const CasperWalletProvider: React.FC<CasperWalletProviderProps> = ({ chil
   );
 };
 
-// Type declaration for Casper Signer
+// Type declaration for Casper Wallet
 declare global {
   interface Window {
-    casperlabsHelper?: {
-      isConnected: () => Promise<boolean>;
-      requestConnection: () => Promise<void>;
+    CasperWalletProvider?: (config: { timeout: number }) => {
+      requestConnection: () => Promise<boolean>;
       getActivePublicKey: () => Promise<string>;
-      sign: (deploy: any, publicKey: string) => Promise<string>;
-      disconnectFromSite: () => Promise<void>;
+      sign: (deploy: string, publicKey: string) => Promise<string>;
+      disconnectFromSite: () => Promise<boolean>;
+      isConnected: () => Promise<boolean>;
     };
+    CasperWalletEventTypes?: any;
   }
 }
