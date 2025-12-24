@@ -1,10 +1,7 @@
 import { z } from "zod/v4";
 
 // Common schemas
-export const casperPublicKeySchema = z.string().regex(
-  /^0[12][0-9a-fA-F]{64}$/,
-  "Invalid Casper public key format",
-);
+export const casperPublicKeySchema = z.string()
 
 export const amountSchema = z.string().regex(
   /^\d+$/,
