@@ -23,12 +23,14 @@ export const LandingPage = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-black text-cyan-50 font-mono selection:bg-cyan-500/30">
+    <div className="min-h-screen bg-black text-cyan-50 font-mono selection:bg-cyan-500/30 relative">
+      <div className="fixed inset-0 z-0">
+        <HeroScene />
+      </div>
       <div className="scanlines" />
       
       {/* Hero Section */}
-      <section className="relative h-screen flex items-center justify-center overflow-hidden">
-        <HeroScene />
+      <section className="relative h-screen flex items-center justify-center overflow-hidden z-10">
         
         <div className="relative z-10 max-w-6xl mx-auto px-6 text-center">
           <motion.div
@@ -122,6 +124,9 @@ export const LandingPage = () => {
       {/* Features Section */}
       <section className="py-24 px-6 bg-zinc-950 relative" id="how-it-works">
         <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10" />
+         <div className="fixed inset-0 z-0">
+        <HeroScene />
+      </div>
         <div className="max-w-7xl mx-auto relative z-10">
           <motion.div
             initial={{ opacity: 0, x: -50 }}
@@ -181,6 +186,9 @@ export const LandingPage = () => {
       {/* How It Works */}
       <section className="py-24 px-6 bg-black relative overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 via-fuchsia-500 to-cyan-500" />
+         <div className="fixed inset-0 z-0">
+        <HeroScene />
+      </div>
         <div className="max-w-4xl mx-auto relative z-10">
           <motion.div
             initial={{ opacity: 0 }}

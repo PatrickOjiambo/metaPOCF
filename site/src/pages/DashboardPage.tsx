@@ -7,6 +7,7 @@ import { FaWallet, FaCoins, FaTrophy, FaHistory, FaChartLine, FaUsers, FaBolt } 
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { HeroScene } from '../components/three/HeroScene';
 
 export const DashboardPage = () => {
   const { isConnected, account, connect, isConnecting } = useCasperWallet();
@@ -59,6 +60,9 @@ export const DashboardPage = () => {
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-black text-cyan-50 font-mono flex items-center justify-center px-6 relative overflow-hidden">
+        <div className="fixed inset-0 z-0 opacity-50">
+          <HeroScene />
+        </div>
         <div className="scanlines" />
         <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10" />
         
@@ -95,6 +99,9 @@ export const DashboardPage = () => {
 
   return (
     <div className="min-h-screen bg-black text-cyan-50 font-mono py-12 px-6 relative">
+      <div className="fixed inset-0 z-0 opacity-30">
+        <HeroScene />
+      </div>
       <div className="scanlines" />
       <div className="max-w-7xl mx-auto relative z-10">
         {/* Header */}

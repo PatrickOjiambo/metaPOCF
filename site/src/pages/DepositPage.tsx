@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { FaCoins, FaCheckCircle, FaInfoCircle, FaBolt } from 'react-icons/fa';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import { HeroScene } from '../components/three/HeroScene';
 
 const depositSchema = z.object({
   amount: z.string()
@@ -76,6 +77,9 @@ export const DepositPage = () => {
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-black text-cyan-50 font-mono flex items-center justify-center px-6 relative overflow-hidden">
+        <div className="fixed inset-0 z-0 opacity-50">
+          <HeroScene />
+        </div>
         <div className="scanlines" />
         <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10" />
         
@@ -157,6 +161,9 @@ export const DepositPage = () => {
 
   return (
     <div className="min-h-screen bg-black text-cyan-50 font-mono py-12 px-6 relative">
+      <div className="fixed inset-0 z-0 opacity-30">
+        <HeroScene />
+      </div>
       <div className="scanlines" />
       <div className="max-w-2xl mx-auto relative z-10">
         <motion.div

@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { FaMoneyBillWave, FaCheckCircle, FaInfoCircle, FaClock, FaBolt } from 'react-icons/fa';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
+import { HeroScene } from '../components/three/HeroScene';
 
 const withdrawSchema = z.object({
   amount: z.string()
@@ -73,6 +74,9 @@ export const WithdrawPage = () => {
   if (!isConnected) {
     return (
       <div className="min-h-screen bg-black text-cyan-50 font-mono flex items-center justify-center px-6 relative overflow-hidden">
+        <div className="fixed inset-0 z-0 opacity-50">
+          <HeroScene />
+        </div>
         <div className="scanlines" />
         <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10" />
         
