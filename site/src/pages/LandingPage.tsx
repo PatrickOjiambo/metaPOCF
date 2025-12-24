@@ -1,7 +1,6 @@
 import { Link } from 'react-router-dom';
 import { HeroScene } from '../components/three/HeroScene';
 import { Button } from '../components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { FaRocket, FaShieldAlt, FaTrophy, FaCoins, FaChartLine, FaLock } from 'react-icons/fa';
 import { motion } from 'framer-motion';
 import { useEffect, useState } from 'react';

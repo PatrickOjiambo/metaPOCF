@@ -5,7 +5,7 @@ import { Suspense } from 'react';
 
 export const HeroScene = () => {
   return (
-    <div className="absolute inset-0 w-full h-full -z-10">
+    <div className="absolute inset-0 w-full h-full z-0">
       <Canvas>
         <Suspense fallback={null}>
           <PerspectiveCamera makeDefault position={[0, 0, 8]} />
