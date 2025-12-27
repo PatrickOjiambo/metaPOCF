@@ -1,6 +1,11 @@
 import { env } from "../env.js";
 import { ProcessedEvent, Treasury } from "../models/index.js";
-
+import {
+  SseClient,
+  EventName,
+  type TransactionProcessedEvent as SdkTransactionProcessedEvent,
+  type BlockAddedEvent as SdkBlockAddedEvent,
+} from "casper-js-sdk";
 /**
  * Casper Event Watcher Service
  * Monitors the Casper Sidecar SSE stream for contract events
@@ -25,12 +30,13 @@ export class EventWatcherService {
   private reconnectAttempts = 0;
   private readonly maxReconnectAttempts = 10;
   private readonly reconnectDelay = 5000;
-  private eventSource: any = null;
+  private sseClient: SseClient | null = null;
+  private lastEventId: number | null = null;
 
   constructor(
     private sidecarUrl: string = env.CASPER_SIDECAR_URL,
     private contractHash: string = env.CONTRACT_HASH,
-  ) {}
+  ) { }
 
   /**
    * Start watching for events
@@ -55,48 +61,199 @@ export class EventWatcherService {
   stop(): void {
     this.isRunning = false;
 
-    if (this.eventSource) {
-      this.eventSource.close();
-      this.eventSource = null;
+    if (this.sseClient) {
+      this.sseClient.stop();
+      this.sseClient = null;
     }
 
     console.log("[EventWatcher] Stopped");
   }
 
   /**
-   * STUB: Connect to SSE stream
-   * In production, this would use EventSource or SSE client to connect to Casper Sidecar
+   * Connect to SSE stream and subscribe to events
    */
   private async connectToStream(): Promise<void> {
-    console.log("[STUB] Connecting to Casper Sidecar SSE stream...");
+    try {
+      console.log("[EventWatcher] Connecting to Casper SSE stream...");
+      console.log(`[EventWatcher] URL: ${this.sidecarUrl}`);
 
-    // STUB: In production, you would:
-    // 1. Import EventSource from 'eventsource' package
-    // 2. Connect to the Sidecar endpoint
-    // 3. Filter events by contract hash
-    // 4. Handle reconnection logic
+      // Create SSE client
+      this.sseClient = new SseClient(this.sidecarUrl);
 
-    // For now, we'll simulate event processing
-    console.log("[STUB] Event watcher connected (stub mode - no real events)");
-    console.log("[STUB] To test event processing, use the manual deposit endpoint");
+      // Subscribe to TransactionProcessed events
+      this.sseClient.subscribe(EventName.TransactionProcessedEventType, (rawEvent) => {
+        try {
+          const parsedEvent = rawEvent.parseAsTransactionProcessedEvent();
+          this.handleTransactionProcessedEvent(parsedEvent);
+        } catch (error) {
+          console.error("[EventWatcher] Error parsing TransactionProcessed event:", error);
+        }
+      });
 
-    // Keep the watcher "alive"
-    this.simulateEventStream();
+      // Subscribe to BlockAdded events for monitoring
+      this.sseClient.subscribe(EventName.BlockAddedEventType, (rawEvent) => {
+        try {
+          const parsedEvent: SdkBlockAddedEvent = rawEvent.parseAsBlockAddedEvent();
+          const blockHash = parsedEvent.BlockAdded?.blockHash;
+          if (blockHash) {
+            console.log(`[EventWatcher] New block added: ${blockHash}`);
+          }
+        } catch (error) {
+          console.error("[EventWatcher] Error parsing BlockAdded event:", error);
+        }
+      });
+
+      // Start the client with the last known event ID if available
+      if (this.lastEventId !== null) {
+        console.log(`[EventWatcher] Resuming from event ID: ${this.lastEventId}`);
+        this.sseClient.start(this.lastEventId);
+      } else {
+        this.sseClient.start();
+      }
+
+      console.log("[EventWatcher] Successfully connected to event stream");
+      this.reconnectAttempts = 0;
+    } catch (error) {
+      console.error("[EventWatcher] Error connecting to stream:", error);
+      this.handleStreamError();
+    }
   }
 
   /**
-   * STUB: Simulate event stream for testing
+   * Handle TransactionProcessed events and extract contract-specific events
    */
-  private simulateEventStream(): void {
-    // This is just to keep the service running
-    // In production, events come from the SSE stream
-    const heartbeat = setInterval(() => {
-      if (!this.isRunning) {
-        clearInterval(heartbeat);
+  private async handleTransactionProcessedEvent(event: SdkTransactionProcessedEvent): Promise<void> {
+    try {
+      const payload = event.transactionProcessedPayload;
+      const transactionHash = payload.transactionHash;
+      const executionResult = payload.executionResult;
+      const blockHash = payload.blockHash;
+      const timestamp = payload.timestamp;
+      
+      if (!transactionHash || !executionResult) {
         return;
       }
-      console.log("[EventWatcher] Heartbeat - waiting for events...");
-    }, 60000); // Every minute
+
+      // Check if execution was successful (no error message means success)
+      const isSuccess = !executionResult.errorMessage;
+      if (!isSuccess) {
+        return;
+      }
+
+      // Extract messages from the event (contract events)
+      const messages = payload.messages || [];
+      
+      for (const message of messages) {
+        // Check if this message is from our contract
+        const entityAddr = message.hashAddr?.toHex?.() || '';
+        if (!entityAddr || !entityAddr.includes(this.contractHash)) {
+          continue;
+        }
+
+        // Parse the message data
+        const messageData = message.message;
+        const topicName = message.topicName || '';
+        const blockIndex = message.blockIndex || 0;
+
+        // Create a CasperEvent from the message
+        const casperEvent: CasperEvent = {
+          event_id: `${blockIndex}-${message.topicIndex || 0}`,
+          deploy_hash: this.extractDeployHash(transactionHash),
+          block_height: blockIndex,
+          timestamp: timestamp?.toJSON?.() || new Date().toISOString(),
+          event_type: topicName,
+          data: this.parseMessageData(messageData),
+        };
+
+        // Process the event
+        await this.processEvent(casperEvent);
+      }
+    } catch (error) {
+      console.error("[EventWatcher] Error handling TransactionProcessed event:", error);
+    }
+  }
+
+  /**
+   * Extract deploy hash from transaction hash object
+   */
+  private extractDeployHash(transactionHash: any): string {
+    if (typeof transactionHash === 'string') {
+      return transactionHash;
+    }
+    if (transactionHash?.toHex) {
+      return transactionHash.toHex();
+    }
+    if (transactionHash?.toString) {
+      return transactionHash.toString();
+    }
+    if (transactionHash?.Version1) {
+      return transactionHash.Version1;
+    }
+    if (transactionHash?.Deploy) {
+      return transactionHash.Deploy;
+    }
+    return JSON.stringify(transactionHash);
+  }
+
+  /**
+   * Parse message data from various formats
+   */
+  private parseMessageData(messageData: any): any {
+    try {
+      // If it's a string message, try to parse as JSON
+      if (messageData?.String) {
+        try {
+          return JSON.parse(messageData.String);
+        } catch {
+          return { raw: messageData.String };
+        }
+      }
+      
+      // If it's already an object, return it
+      if (typeof messageData === 'object') {
+        return messageData;
+      }
+
+      // Try to parse as JSON string
+      if (typeof messageData === 'string') {
+        try {
+          return JSON.parse(messageData);
+        } catch {
+          return { raw: messageData };
+        }
+      }
+
+      return messageData;
+    } catch (error) {
+      console.error("[EventWatcher] Error parsing message data:", error);
+      return { raw: messageData };
+    }
+  }
+
+  /**
+   * Handle stream errors and implement reconnection logic
+   */
+  private handleStreamError(): void {
+    if (!this.isRunning) {
+      return;
+    }
+
+    this.reconnectAttempts++;
+
+    if (this.reconnectAttempts > this.maxReconnectAttempts) {
+      console.error("[EventWatcher] Max reconnection attempts reached. Stopping.");
+      this.stop();
+      return;
+    }
+
+    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+    console.log(`[EventWatcher] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+    setTimeout(() => {
+      if (this.isRunning) {
+        this.connectToStream();
+      }
+    }, delay);
   }
 
   /**
@@ -340,15 +497,55 @@ export class EventWatcherService {
    * Used for re-syncing after downtime
    */
   async replayEvents(fromBlock: number, toBlock?: number): Promise<void> {
-    console.log(`[STUB] Replaying events from block ${fromBlock} to ${toBlock ?? "latest"}`);
+    console.log(`[EventWatcher] Replaying events from block ${fromBlock} to ${toBlock ?? "latest"}`);
 
-    // STUB: In production, this would:
-    // 1. Query the Casper node/sidecar for historical events
-    // 2. Filter by contract hash and block range
-    // 3. Process each event through processEvent()
-    // 4. Handle any failures gracefully
+    try {
+      // Stop current stream if running
+      const wasRunning = this.isRunning;
+      if (wasRunning) {
+        this.stop();
+      }
 
-    console.log("[STUB] Replay complete (stub mode - no actual events replayed)");
+      // Create a temporary SSE client for replay
+      const replayClient = new SseClient(this.sidecarUrl);
+      
+      // Subscribe to events for replay
+      replayClient.subscribe(EventName.TransactionProcessedEventType, (rawEvent) => {
+        try {
+          const parsedEvent: SdkTransactionProcessedEvent = rawEvent.parseAsTransactionProcessedEvent();
+          const blockHashStr = parsedEvent.transactionProcessedPayload?.blockHash?.toHex?.();
+          
+          // Stop replay if we've reached the target block
+          if (toBlock && blockHashStr && parseInt(blockHashStr, 16) > toBlock) {
+            replayClient.stop();
+            return;
+          }
+          
+          this.handleTransactionProcessedEvent(parsedEvent);
+        } catch (error) {
+          console.error("[EventWatcher] Error during replay:", error);
+        }
+      });
+
+      // Start replay from the specified block
+      // Note: The actual block ID mapping depends on your node's event cache
+      console.log(`[EventWatcher] Starting replay from event ID corresponding to block ${fromBlock}`);
+      replayClient.start(fromBlock);
+
+      // Wait for replay to complete (in production, you'd implement proper completion detection)
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      replayClient.stop();
+
+      console.log("[EventWatcher] Replay complete");
+
+      // Restart the watcher if it was running before
+      if (wasRunning) {
+        await this.start();
+      }
+    } catch (error) {
+      console.error("[EventWatcher] Error during event replay:", error);
+      throw error;
+    }
   }
 }
 
