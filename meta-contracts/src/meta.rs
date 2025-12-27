@@ -20,6 +20,22 @@ pub struct Meta {
     /// Track total principal (deposits) separately to identify rewards clearly.
     total_principal: Var<U512>,
 }
+// Events
+#[odra::event]
+pub struct RewardsHarvestedEvent {
+    pub amount: U512,
+}
+#[odra::event]
+pub struct DepositMadeEvent {
+    pub user: Address,
+    pub amount: U512,
+}
+#[odra::event]
+pub struct UnstakeRequestedEvent {
+    pub user: Address,
+    pub amount: U512,
+}
+
 #[odra::odra_type]
 pub struct UnstakeRequest {
     pub user: Address,
@@ -45,19 +61,19 @@ impl Meta {
     #[odra(payable)]
     pub fn deposit(&mut self) {
         let caller = self.env().caller();
+        const ONE_CSPR_IN_MOTES: u64 = 1_000_000_000;
 
         let deposit_amount = self.env().attached_value();
         // 1. Update internal accounting
         self.treasury_balance.add(deposit_amount);
         self.total_principal.add(deposit_amount);
-        self.investor_balances
-            .add(&caller, deposit_amount);
+        self.investor_balances.add(&caller, deposit_amount);
         // 2. Add to the pooling variable
         let current_pending = self.pending_stake_pool.get_or_default();
         let new_pending = current_pending + deposit_amount;
 
         // 3. Threshold Check (500 CSPR = 500,000,000,000 Motes)
-        let min_stake = U512::from(500_000_000_000u64);
+        let min_stake = U512::from(50 * ONE_CSPR_IN_MOTES);
         if new_pending >= min_stake {
             // We have enough to meet the Casper network requirement
             self.stake(new_pending);
@@ -72,6 +88,10 @@ impl Meta {
             // Just update the pool and wait for more deposits
             self.pending_stake_pool.set(new_pending);
         }
+        self.env().emit_event(DepositMadeEvent {
+            user: caller,
+            amount: deposit_amount,
+        });
         //TODO: Mint mCSPR tokens to the user representing their stake
     }
 
@@ -81,12 +101,9 @@ impl Meta {
         assert!(investor_balance >= amount, "Insufficient balance");
         //We are triggering the actual undelegation here
         self.unstake(amount);
-        self.staked_amount
-            .subtract(amount);
-        self.total_unstaked_amount
-            .add(amount);
-        self.investor_balances
-            .subtract(&caller, amount);
+        self.staked_amount.subtract(amount);
+        self.total_unstaked_amount.add(amount);
+        self.investor_balances.subtract(&caller, amount);
         let request = UnstakeRequest {
             user: caller,
             amount,
@@ -167,15 +184,35 @@ impl Meta {
             // self.env().emit_event(RewardsHarvested { amount: surplus });
         }
     }
+    pub fn get_staked_amount(&self) -> U512 {
+        self.staked_amount.get_or_default()
+    }
+    pub fn get_treasury_balance(&self) -> U512 {
+        self.treasury_balance.get_or_default()
+    }
+    pub fn get_pending_stake_pool(&self) -> U512 {
+        self.pending_stake_pool.get_or_default()
+    }
+    pub fn get_unstaked_amount(&self) -> U512 {
+        self.total_unstaked_amount.get_or_default()
+    }
+    pub fn get_harvested_prize_pool(&self) -> U512 {
+        self.harvested_prize_pool.get_or_default()
+    }
+    pub fn get_unstaked_queue_length(&self) -> u32 {
+        self.unstake_queue.len()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::meta::{MetaHostRef};
-    use odra::casper_types::{PublicKey, U512, SecretKey};
+    use super::{Meta, MetaInitArgs};
+    use crate::meta::MetaHostRef;
+    use odra::casper_types::{PublicKey, SecretKey, U512};
     use odra::host::{Deployer, HostEnv, HostRef};
     use odra::prelude::*;
-
+    const ONE_HOUR_IN_MILLISECONDS: u64 = 3_600_000;
+    const ONE_CSPR_IN_MOTES: u64 = 1_000_000_000;
     // Helper to create a dummy validator public key
     fn mock_validator() -> PublicKey {
         let secret_key = SecretKey::ed25519_from_bytes([1u8; 32]).unwrap();
@@ -183,57 +220,104 @@ mod tests {
     }
 
     #[test]
-    fn test_initialization() {
-        let env = odra_test::env();
-        let validator = mock_validator();
-        let meta = Deployer::init(&env, validator.clone());
+    fn init_test() {
+        let test_env = odra_test::env();
+        let init_args = MetaInitArgs {
+            validator: mock_validator(),
+        };
+        let meta_contract = Meta::deploy(&test_env, init_args);
+        assert_eq!(meta_contract.get_staked_amount(), U512::zero());
+        assert_eq!(meta_contract.get_treasury_balance(), U512::zero());
+        assert_eq!(meta_contract.get_pending_stake_pool(), U512::zero());
+    }
+    #[test]
+    fn deposit_below_threshold() {
+        let test_env = odra_test::env();
+        let init_args = MetaInitArgs {
+            validator: mock_validator(),
+        };
+        let mut meta_contract = Meta::deploy(&test_env, init_args);
 
-        // Verify state (Internal getter or manual check if public)
-        // Since we are using HostRef, we call the contract's public methods
-        // Add a 'get_validator' method to your contract for this test if needed
+        // Deposit 300 CSPR (300,000,000,000 Motes)
+        let deposit_amount = U512::from(30 * ONE_CSPR_IN_MOTES);
+        let alice = test_env.get_account(0);
+        test_env.set_caller(alice.address());
+        meta_contract.with_tokens(deposit_amount).deposit();
+        assert_eq!(meta_contract.get_treasury_balance(), deposit_amount);
+        assert_eq!(meta_contract.get_pending_stake_pool(), deposit_amount);
+        assert_eq!(meta_contract.get_staked_amount(), U512::zero());
+    }
+    #[test]
+    fn deposit_above_threshold() {
+        let test_env = odra_test::env();
+        let init_args = MetaInitArgs {
+            validator: mock_validator(),
+        };
+        let mut meta_contract = Meta::deploy(&test_env, init_args);
+
+        // Deposit 600 CSPR (600,000,000,000 Motes)
+        let deposit_amount = U512::from(60 * ONE_CSPR_IN_MOTES);
+        let bob = test_env.get_account(1);
+        test_env.set_caller(bob.address());
+        meta_contract.with_tokens(deposit_amount).deposit();
+        assert_eq!(meta_contract.get_treasury_balance(), U512::zero());
+        assert_eq!(meta_contract.get_pending_stake_pool(), U512::zero());
+        assert_eq!(meta_contract.get_staked_amount(), deposit_amount);
     }
 
     #[test]
-    fn test_deposit_pooling_threshold() {
-        let env = odra_test::env();
-        let investor = env.get_account(1);
-        let validator = mock_validator();
-        let mut meta = MetaDeployer::init(&env, validator);
-
-        // 1. Small deposit (100 CSPR) - Should stay in pending
-        let deposit_1 = U512::from(100_000_000_000u64); // 100 CSPR in motes
-        env.set_caller(investor);
-        meta.with_tokens(deposit_1).deposit();
-
-        assert_eq!(meta.get_investor_balance(investor), deposit_1);
-        
-        // 2. Second deposit to cross the 500 CSPR threshold
-        let deposit_2 = U512::from(450_000_000_000u64); // 450 CSPR
-        meta.with_tokens(deposit_2).deposit();
-
-        // Total should be 550 CSPR. Because it's > 500, stake() was called.
-        // In a real test environment, you'd check if the delegation actually happened 
-        // using env.get_account_balance or checking the internal `staked_amount` var.
-        assert_eq!(meta.get_investor_balance(investor), deposit_1 + deposit_2);
+    fn multiple_deposits_meeting_threshold() {
+        let test_env = odra_test::env();
+        let init_args = MetaInitArgs {
+            validator: mock_validator(),
+        };
+        let mut meta_contract = Meta::deploy(&test_env, init_args);
+        // First deposit: 200 CSPR (200,000,000,000 Motes)
+        let deposit_amount1 = U512::from(20 * ONE_CSPR_IN_MOTES);
+        let alice = test_env.get_account(0);
+        test_env.set_caller(alice.address());
+        meta_contract.with_tokens(deposit_amount1).deposit();
+        assert_eq!(meta_contract.get_treasury_balance(), deposit_amount1);
+        assert_eq!(meta_contract.get_pending_stake_pool(), deposit_amount1);
+        assert_eq!(meta_contract.get_staked_amount(), U512::zero());
+        // Second deposit: 350 CSPR (350,000,000,000 Motes)
+        let deposit_amount2 = U512::from(35 * ONE_CSPR_IN_MOTES);
+        let bob = test_env.get_account(1);
+        test_env.set_caller(bob.address());
+        meta_contract.with_tokens(deposit_amount2).deposit();
+        let total_deposit = deposit_amount1 + deposit_amount2;
+        assert_eq!(meta_contract.get_treasury_balance(), U512::zero());
+        assert_eq!(meta_contract.get_pending_stake_pool(), U512::zero());
+        assert_eq!(meta_contract.get_staked_amount(), total_deposit);
     }
-
     #[test]
-    fn test_unstake_and_queue() {
-        let env = odra_test::env();
-        let investor = env.get_account(1);
-        let validator = mock_validator();
-        let mut meta = MetaDeployer::init(&env, validator);
+    fn unstake_request() {
+        let test_env = odra_test::env();
+        let init_args = MetaInitArgs {
+            validator: mock_validator(),
+        };
+        let mut meta_contract = Meta::deploy(&test_env, init_args);
 
-        // Deposit enough to stake
-        let amount = U512::from(600_000_000_000u64);
-        env.set_caller(investor);
-        meta.with_tokens(amount).deposit();
+        // Deposit 600 CSPR (600,000,000,000 Motes)
+        let deposit_amount = U512::from(60 * ONE_CSPR_IN_MOTES);
+        let bob = test_env.get_account(1);
+        test_env.set_caller(bob.address());
+        meta_contract.with_tokens(deposit_amount).deposit();
 
-        // Request Unstake
-        let unstake_amount = U512::from(200_000_000_000u64);
-        meta.request_unstake(unstake_amount);
+        // Request unstake of 200 CSPR (200,000,000,000 Motes)
+        let unstake_amount = U512::from(20 * ONE_CSPR_IN_MOTES);
+        meta_contract.request_unstake(unstake_amount);
 
-        // Balance should drop immediately (internal accounting)
-        assert_eq!(meta.get_investor_balance(investor), amount - unstake_amount);
+        assert_eq!(
+            meta_contract.get_staked_amount(),
+            deposit_amount - unstake_amount
+        );
+        assert_eq!(meta_contract.get_unstaked_amount(), unstake_amount);
+        assert_eq!(
+            meta_contract.get_investor_balance(bob.address()),
+            deposit_amount - unstake_amount
+        );
+        assert_eq!(meta_contract.get_unstaked_queue_length(), 1);
     }
+
 }

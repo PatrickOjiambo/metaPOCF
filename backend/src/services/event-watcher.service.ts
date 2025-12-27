@@ -279,10 +279,10 @@ export class EventWatcherService {
     try {
       // Process based on event type
       switch (event.event_type) {
-        case "Deposit":
+        case "DepositMadeEvent":
           await this.handleDeposit(event);
           break;
-        case "UnstakeRequest":
+        case "UnstakeRequestEvent":
           await this.handleUnstakeRequest(event);
           break;
         case "Withdrawal":
