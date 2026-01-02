@@ -23,7 +23,7 @@ export const getUserHistory = async (
 ) => {
   const params: any = { page, limit };
   if (type) params.type = type;
-  
+
   const response = await api.get(`/user/${address}/history`, { params });
   return response.data;
 };
@@ -44,6 +44,20 @@ export const getDrawHistory = async (page = 1, limit = 10) => {
   });
   return response.data;
 };
+export const sendDeployForSigning = async (
+  deployJSON: object,
+  signatureHex: string,
+  publicKeyHex: string,
+  // signedDeploy: object
+) => {
+  const response = await api.post('/deploy/sign-deploy', {
+    deployJSON,
+    signatureHex,
+    publicKeyHex,
+    // signedDeploy
+  });
+  return response.data?.deployHash;
+}
 
 // Admin Endpoints (not used in frontend but included for completeness)
 export const getAdminStats = async (adminSecret: string) => {

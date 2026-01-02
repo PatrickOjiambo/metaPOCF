@@ -12,7 +12,8 @@ import { FaCoins, FaCheckCircle, FaInfoCircle, FaBolt } from 'react-icons/fa';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { HeroScene } from '../components/three/HeroScene';
-
+import { Contracts, CasperClient, RuntimeArgs, CLValueBuilder, CLPublicKey, CLByteArray, decodeBase16, CLList, CLU8, csprToMotes, DeployUtil } from "casper-js-sdk";
+import { sendDeployForSigning } from '@/lib/api';
 const depositSchema = z.object({
   amount: z.string()
     .min(1, 'Amount is required')
@@ -24,10 +25,70 @@ const depositSchema = z.object({
     }),
 });
 
-type DepositFormData = z.infer<typeof depositSchema>;
 
+
+const CONTRACT_HASH = import.meta.env.VITE_CONTRACT_HASH as string;
+const CONTRACT_PACKAGE_HASH = import.meta.env.VITE_CONTRACT_PACKAGE_HASH as string;
+const NODE_URL = import.meta.env.VITE_NODE_ADDRESS as string;
+const NETWORK_NAME = import.meta.env.VITE_NETWORK_NAME as string;
+const BACKEND_API_URL = import.meta.env.VITE_API_BASE_URL as string;
+const PROXY_URL = import.meta.env.VITE_API_PROXY_URL as string;
+type DepositFormData = z.infer<typeof depositSchema>;
+export const getProxyWASM = async (): Promise<Uint8Array> => {
+  const result = await fetch(`${PROXY_URL}/proxy-wasm`);
+  if (!result.ok) {
+    throw new Error(await result.text());
+  }
+  const buffer = await result.arrayBuffer();
+  return new Uint8Array(buffer);
+};
+export const preparedepositTransaction = async (publicKey: CLPublicKey, amount: number) => {
+  const proxyWasm = await getProxyWASM();
+  const casperClient = new CasperClient(NODE_URL);
+  const contract = new Contracts.Contract(casperClient);
+  contract.setContractHash(`hash-${CONTRACT_HASH}`);
+  // Contract package hash is a 32-byte array, 
+  // so take the hex string and convert it to a byte array.
+  // This is done using the decodeBase16 function from 
+  // the casper-js-sdk.
+  const contractPackageHashBytes = new CLByteArray(
+    decodeBase16(`${CONTRACT_PACKAGE_HASH}`)
+  );
+  console.log("Contract has", CONTRACT_HASH);
+  console.log("Contract package hash", contractPackageHashBytes);
+  // Next, create RuntimeArgs for the deploy 
+  // and pass them as bytes to the contract.
+  // Note that the args are not a byte array, but a CLList 
+  // of CLU8s - a different type of CLValue.
+  // Finally, create a Uint8Array from the bytes and 
+  // then transform it into a CLList<CLU8>.
+  const args_bytes: Uint8Array = RuntimeArgs.fromMap({})
+    .toBytes()
+    .unwrap();
+  const serialized_args = new CLList(
+    Array.from(args_bytes)
+      .map(value => new CLU8(value))
+  );
+
+  const args = RuntimeArgs.fromMap({
+    attached_value: CLValueBuilder.u512(csprToMotes(amount)),
+    amount: CLValueBuilder.u512(csprToMotes(amount)),
+    entry_point: CLValueBuilder.string("deposit"),
+    package_hash: contractPackageHashBytes,
+    args: serialized_args
+  });
+  // Use proxy_caller to send tokens to the contract.
+  const deploy = contract.install(
+    proxyWasm,
+    args,
+    csprToMotes(10).toString(),
+    publicKey,
+    NETWORK_NAME,
+  );
+  return deploy;
+}
 export const DepositPage = () => {
-  const { isConnected, account, connect } = useCasperWallet();
+  const { isConnected, account, connect, signDeploy } = useCasperWallet();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [depositSuccess, setDepositSuccess] = useState(false);
   const [deployHash, setDeployHash] = useState('');
@@ -51,20 +112,23 @@ export const DepositPage = () => {
     setIsSubmitting(true);
 
     try {
-      // Stub implementation - In production, this would interact with the Casper contract
       const amount = parseFloat(data.amount);
-      
-      // Simulate a delay for "processing"
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      // Generate a stub deploy hash
-      const stubDeployHash = `stub_deposit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      setDeployHash(stubDeployHash);
-      
+      const publicKey = CLPublicKey.fromHex(account.publicKey);
+      const deploy = await preparedepositTransaction(publicKey, amount);
+      const deployJSON = DeployUtil.deployToJson(deploy);
+      const signedDeploy = await signDeploy(deployJSON);
+      const result = await sendDeployForSigning(
+        deployJSON,
+        signedDeploy.signatureHex,
+        account.publicKey
+        // signedDeployJSON
+      );
+      console.log('Deposit deploy submitted:', result);
+      setDeployHash(result);
       // Show success
       setDepositSuccess(true);
       toast.success(`Successfully deposited ${amount} CSPR!`);
-      
+
       reset();
     } catch (error: any) {
       console.error('Error depositing:', error);
@@ -82,7 +146,7 @@ export const DepositPage = () => {
         </div>
         <div className="scanlines" />
         <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-10" />
-        
+
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -96,7 +160,7 @@ export const DepositPage = () => {
             AUTHENTICATION_REQUIRED
           </h2>
           <p className="text-zinc-400 mb-8 border-l-2 border-fuchsia-500 pl-4 text-left">
-            // PROTOCOL_LOCK:<br/>
+            // PROTOCOL_LOCK:<br />
             Connect Casper wallet to initiate deposit sequence.
           </p>
           <Button
@@ -253,4 +317,3 @@ export const DepositPage = () => {
     </div>
   );
 };
-   

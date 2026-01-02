@@ -89,8 +89,15 @@ export const drawResultResponseSchema = z.object({
   initiated_at: z.string().datetime(),
   completed_at: z.string().datetime().nullable(),
 });
+export const signedDeploySchema = z.object({
+  signatureHex: z.string(),
+  publicKeyHex: z.string(),
+  deployJSON: z.any(),
+  // signedDeploy: z.any()
+})
 
 // Type exports
+export type SignedDeploySchema = z.infer<typeof signedDeploySchema>;
 export type GetUserStatsParams = z.infer<typeof getUserStatsParamsSchema>;
 export type GetUserHistoryParams = z.infer<typeof getUserHistoryParamsSchema>;
 export type GetUserHistoryQuery = z.infer<typeof getUserHistoryQuerySchema>;

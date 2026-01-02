@@ -149,7 +149,7 @@ export const CasperWalletProvider: React.FC<CasperWalletProviderProps> = ({ chil
     }
   }, []);
 
-  const signDeploy = useCallback(async (deploy: any): Promise<string> => {
+  const signDeploy = useCallback(async (deploy: any): Promise<any> => {
     if (!isConnected || !account) {
       throw new Error('Wallet not connected');
     }
@@ -165,12 +165,20 @@ export const CasperWalletProvider: React.FC<CasperWalletProviderProps> = ({ chil
       const deployJson = JSON.stringify(deploy);
       
       // Sign with Casper Wallet using the provider.sign method
-      const signedDeployJson = await provider.sign(deployJson, account.publicKey);
+      const signedDeployResult = await provider.sign(deployJson, account.publicKey);
+      console.log('Signed deploy result:', signedDeployResult);
+      console.log("Signature hex:", signedDeployResult.signatureHex);
+      if (signedDeployResult.cancelled) {
+        toast.error('Transaction cancelled by user.');
+        throw new Error('Transaction cancelled');
+      }
 
-      return signedDeployJson;
+      return signedDeployResult;
     } catch (error: any) {
       console.error('Error signing deploy:', error);
-      toast.error(`Failed to sign transaction: ${error.message || 'Unknown error'}`);
+      if (error.message !== 'Transaction cancelled') {
+        toast.error(`Failed to sign transaction: ${error.message || 'Unknown error'}`);
+      }
       throw error;
     }
   }, [isConnected, account]);

@@ -19,7 +19,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "casper-js-sdk": "^5.0.7",
+    "casper-js-sdk": "2.15.4",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "eventsource": "^4.1.0",
