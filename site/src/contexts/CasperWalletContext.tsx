@@ -70,6 +70,7 @@ export const CasperWalletProvider: React.FC<CasperWalletProviderProps> = ({ chil
       const provider = getProvider();
       
       if (!provider) {
+        window.open('https://casperwallet.io/', '_blank');
         toast.error('Casper Wallet extension not detected. Please install it from the Chrome Web Store.');
         setIsConnecting(false);
         return;
