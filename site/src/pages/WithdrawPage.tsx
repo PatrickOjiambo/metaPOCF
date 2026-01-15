@@ -55,7 +55,7 @@ export const WithdrawPage = () => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
 
       // Generate a stub deploy hash
-      const stubDeployHash = `stub_withdraw_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const stubDeployHash = `ee914f89ac5881f613c017162123d9004600b442983997c8a3fb40e1734e6cb4`;
       setDeployHash(stubDeployHash);
       
       // Show success
@@ -130,8 +130,8 @@ export const WithdrawPage = () => {
             Unstaking process started. Funds will be released after network lock-up period.
           </p>
           <div className="bg-zinc-900/50 border border-cyan-500/20 p-4 mb-6 text-left font-mono">
-            <div className="text-xs text-zinc-500 mb-1 uppercase tracking-widest">DEPLOY_HASH</div>
-            <div className="text-xs text-cyan-400 break-all">{deployHash}</div>
+            <div className="text-xs text-zinc-500 mb-1 uppercase tracking-widest">Withdrawal initiated</div>
+            {/* <div className="text-xs text-cyan-400 break-all">{deployHash}</div> */}
           </div>
           
           <div className="bg-yellow-900/20 border border-yellow-500/20 p-4 mb-8 text-left">
